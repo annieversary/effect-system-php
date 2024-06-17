@@ -1,0 +1,20 @@
+{
+    "name": "annieversary/effect-system-php",
+    "autoload": {
+        "psr-4": {
+            "Annieversary\\EffectSystem\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "annieversary",
+            "email": "annie@versary.town"
+        }
+    ],
+    "require-dev": {
+        "phpunit/phpunit": "^11.2"
+    },
+    "scripts": {
+        "test": "phpunit tests"
+    }
+}
