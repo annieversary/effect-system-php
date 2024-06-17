@@ -20,8 +20,7 @@ function run(\Generator $gen, array|Handler|null $handlers = null) {
             }
         }
 
-        // TODO change to new class
-        throw new \Exception('Unhandled effect ' . $effect::class);
+        throw new Errors\UnhandledEffect($effect::class);
     };
 
     while (true) {
