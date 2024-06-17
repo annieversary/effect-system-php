@@ -1,6 +1,6 @@
 <?php
 
-namespace Annieversary\EffectSystem;
+namespace Versary\EffectSystem;
 
 function run(\Generator $gen, array|Handler|null $handlers = null) {
     if ($handlers instanceof Handler) {

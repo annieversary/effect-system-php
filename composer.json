@@ -1,8 +1,8 @@
 {
-    "name": "annieversary/effect-system-php",
+    "name": "versary/effect-system-php",
     "autoload": {
         "psr-4": {
-            "Annieversary\\EffectSystem\\": "src/"
+            "Versary\\EffectSystem\\": "src/"
         }
     },
     "authors": [

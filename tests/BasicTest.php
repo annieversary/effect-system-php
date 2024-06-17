@@ -1,6 +1,6 @@
 <?php
 
-namespace Annieversary\EffectSystem;
+namespace Versary\EffectSystem;
 
 use PHPUnit\Framework\TestCase;
 
