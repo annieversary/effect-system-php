@@ -1,67 +1,41 @@
-<?php
+<?php declare(strict_types=1);
 
 namespace Versary\EffectSystem;
 
-function run(\Generator $gen, array|Handler|null $handlers = null) {
-    if ($handlers instanceof Handler) {
-        $handlers = [$handlers];
-    }
-
-    $handle = function (Effect $effect) use ($handlers) {
-        foreach ($handlers as $handler) {
-            if ($effect instanceof $handler::$effect) {
-                $o = $handler->handle($effect);
-
-                if ($o instanceof \Generator) {
-                    return run($o, $handlers);
-                }
-
-                return $o;
-            }
-        }
-
+function run(\Generator $generator) {
+    if ($generator->valid()) {
+        $effect = $generator->current();
         throw new Errors\UnhandledEffect($effect::class);
-    };
-
-    while (true) {
-        if (!$gen->valid()) {
-            return $gen->getReturn();
-        }
-
-        $effect = $gen->current();
-        $output = $handle($effect);
-        $gen->send($output);
     }
+
+    return $generator->getReturn();
 }
 
-function handle(\Generator $gen, array|Handler $handlers) {
-    if ($handlers instanceof Handler) {
-        $handlers = [$handlers];
-    }
-
+function handle(\Generator $generator, Handler $handler) {
     while (true) {
-        if (!$gen->valid()) {
-            return $gen->getReturn();
+        if (!$generator->valid()) {
+            return $handler->return($generator->getReturn());
         }
 
-        $effect = $gen->current();
+        $effect = $generator->current();
 
-        $output = [];
-        foreach ($handlers as $handler) {
-            if ($effect instanceof $handler::$effect) {
-                $o = $handler->handle($effect);
-                if ($o instanceof \Generator) {
-                    $output[] = yield from $o;
-                } else {
-                    $output[] = $o;
-                }
+        if ($effect instanceof $handler::$effect) {
+            // TODO implement resume and call handle
+            // im not sure if handle should return a value or not
+            // personally i dont think so
+            $resume = fn ($p) => null;
+
+            $o = $handler->resume($effect);
+            if ($o instanceof \Generator) {
+                $output = yield from $o;
+            } else {
+                $output = $o;
             }
-        }
-        if (count($output) == 0) {
-            $output[] = yield $effect;
+        } else {
+            $output = yield $effect;
         }
 
-        $gen->send($output[0]);
+        $generator->send($output);
     }
 }
 

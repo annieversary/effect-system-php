@@ -1,0 +1,2 @@
+* effect-system-php
+This library implements a basic effect system in PHP, using generators.

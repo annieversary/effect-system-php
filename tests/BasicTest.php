@@ -1,8 +1,10 @@
-<?php
+<?php declare(strict_types=1);
 
 namespace Versary\EffectSystem;
 
 use PHPUnit\Framework\TestCase;
+
+use Versary\EffectSystem\Errors\UnhandledEffect;
 
 class BasicTest extends TestCase
 {
@@ -16,20 +18,12 @@ class BasicTest extends TestCase
     public function test_works() {
         $gen = $this->program();
 
-        $result = run($gen, [new AddNumberHandler, new SubNumberHandler]);
+        $gen = handle($gen, new AddNumberHandler);
+        $gen = handle($gen, new SubNumberHandler);
+
+        $result = run($gen);
 
         $this->assertEquals(8, $result);
-    }
-
-    public function test_program() {
-        $gen = $this->program();
-
-        $this->assertInstanceOf(AddNumbers::class, $gen->current());
-        $gen->send(10);
-        $this->assertInstanceOf(SubNumbers::class, $gen->current());
-        $gen->send(10);
-        $this->assertFalse($gen->valid());
-        $this->assertEquals(10, $gen->getReturn());
     }
 
     public function test_half_handle() {
@@ -43,29 +37,12 @@ class BasicTest extends TestCase
         $this->assertEquals(10, $gen->getReturn());
     }
 
-    public function test_handle_and_run() {
-        $gen = $this->program();
-
-        $adds_handled = handle($gen, new AddNumberHandler);
-        $result = run($adds_handled, new SubNumberHandler);
-
-        $this->assertEquals(8, $result);
-    }
-
-    public function test_both_handled() {
-        $gen = $this->program();
-
-        $adds_handled = handle($gen, new AddNumberHandler);
-        $subs_handled = handle($adds_handled, new SubNumberHandler);
-        $result = run($subs_handled);
-
-        $this->assertEquals(8, $result);
-    }
-
     public function test_handlers_in_inverse_order_works() {
         $gen = $this->program();
 
-        $result = run($gen, [new SubNumberHandler, new AddNumberHandler]);
+        $gen = handle($gen, new SubNumberHandler);
+        $gen = handle($gen, new AddNumberHandler);
+        $result = run($gen);
 
         $this->assertEquals(8, $result);
     }
@@ -73,25 +50,17 @@ class BasicTest extends TestCase
     public function test_missing_handler() {
         $gen = $this->program();
 
-        $this->expectException(\Exception::class);
+        $this->expectException(UnhandledEffect::class);
 
-        run($gen, [new AddNumberHandler]);
+        run($gen);
     }
 
     public function test_handler_that_yields() {
         $gen = $this->program();
 
-        $result = run($gen, [new SubNumberByAddHandler, new AddNumberHandler]);
-
-        $this->assertEquals(8, $result);
-    }
-
-    public function test_handle_handler_that_yields() {
-        $gen = $this->program();
-
-        $adds_handled = handle($gen, new AddNumberHandler);
-        $subs_handled = handle($adds_handled, new SubNumberHandler);
-        $result = run($subs_handled);
+        $gen = handle($gen, new SubNumberByAddHandler);
+        $gen = handle($gen, new AddNumberHandler);
+        $result = run($gen);
 
         $this->assertEquals(8, $result);
     }
@@ -104,7 +73,7 @@ class AddNumbers extends Effect {
 class AddNumberHandler extends Handler {
     public static $effect = AddNumbers::class;
 
-    public function handle(mixed $effect) {
+    public function resume(mixed $effect) {
         return $effect->a + $effect->b;
     }
 }
@@ -116,7 +85,7 @@ class SubNumbers extends Effect {
 class SubNumberHandler extends Handler {
     public static $effect = SubNumbers::class;
 
-    public function handle(mixed $effect) {
+    public function resume(mixed $effect) {
         return $effect->a - $effect->b;
     }
 }
@@ -124,7 +93,7 @@ class SubNumberHandler extends Handler {
 class SubNumberByAddHandler extends Handler {
     public static $effect = SubNumbers::class;
 
-    public function handle(mixed $effect) {
+    public function resume(mixed $effect) {
         return yield new AddNumbers($effect->a, -$effect->b);
     }
 }
