@@ -17,7 +17,7 @@ abstract class Effect {
         return $handler->return($result);
     }
 
-    final private static function inner_handle(\Generator $generator, Handler $handler) {
+    private static function inner_handle(\Generator $generator, Handler $handler) {
         if (!$generator->valid()) {
             return $generator->getReturn();
         }
@@ -31,10 +31,12 @@ abstract class Effect {
                 return yield from self::inner_handle($generator, $handler);
             };
 
-            $o = yield from $handler->handle($effect, $resume);
+            $handled = $handler->handle($effect, $resume);
+            $handled = $handled instanceof \Generator ? yield from $handled : $handled;
 
-            if ($o !== null) {
-                return $o;
+            // handle allows us to abort execution
+            if ($handled !== null) {
+                return $handled;
             }
         }
 
