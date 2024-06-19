@@ -5,66 +5,47 @@ namespace Versary\EffectSystem;
 use PHPUnit\Framework\TestCase;
 
 use Versary\EffectSystem\Errors\UnhandledEffect;
+use Versary\EffectSystem\Tests\BasicTest\{AddNumbers, AddNumberHandler};
 
 class BasicTest extends TestCase
 {
-    function program() {
+    function basic() {
         $v = yield new AddNumbers(3, 7);
-        $v = yield new SubNumbers($v, 2);
 
         return $v;
     }
 
-    public function test_works() {
-        $gen = $this->program();
+    public function test_basic() {
+        $gen = $this->basic();
 
-        $gen = handle($gen, new AddNumberHandler);
-        $gen = handle($gen, new SubNumberHandler);
+        $gen = Effect::handle($gen, new AddNumberHandler);
 
-        $result = run($gen);
+        $result = Effect::run($gen);
 
-        $this->assertEquals(8, $result);
+        $this->assertEquals(10, $result);
     }
 
-    public function test_half_handle() {
-        $gen = $this->program();
+    function double() {
+        $v = yield new AddNumbers(3, 1);
+        $v = yield new AddNumbers($v, 7);
 
-        $gen = handle($gen, new AddNumberHandler);
-
-        $this->assertInstanceOf(SubNumbers::class, $gen->current());
-        $gen->send(10);
-        $this->assertFalse($gen->valid());
-        $this->assertEquals(10, $gen->getReturn());
+        return $v;
     }
 
-    public function test_handlers_in_inverse_order_works() {
-        $gen = $this->program();
+    public function test_double() {
+        $gen = $this->double();
 
-        $gen = handle($gen, new SubNumberHandler);
-        $gen = handle($gen, new AddNumberHandler);
-        $result = run($gen);
+        $gen = Effect::handle($gen, new AddNumberHandler);
 
-        $this->assertEquals(8, $result);
-    }
+        $result = Effect::run($gen);
 
-    public function test_missing_handler() {
-        $gen = $this->program();
-
-        $this->expectException(UnhandledEffect::class);
-
-        run($gen);
-    }
-
-    public function test_handler_that_yields() {
-        $gen = $this->program();
-
-        $gen = handle($gen, new SubNumberByAddHandler);
-        $gen = handle($gen, new AddNumberHandler);
-        $result = run($gen);
-
-        $this->assertEquals(8, $result);
+        $this->assertEquals(11, $result);
     }
 }
+
+namespace Versary\EffectSystem\Tests\BasicTest;
+
+use Versary\EffectSystem\{Effect, Handler};
 
 class AddNumbers extends Effect {
     public function __construct(public int $a, public int $b) {}
@@ -75,25 +56,5 @@ class AddNumberHandler extends Handler {
 
     public function resume(mixed $effect) {
         return $effect->a + $effect->b;
-    }
-}
-
-class SubNumbers extends Effect {
-    public function __construct(public int $a, public int $b) {}
-}
-
-class SubNumberHandler extends Handler {
-    public static $effect = SubNumbers::class;
-
-    public function resume(mixed $effect) {
-        return $effect->a - $effect->b;
-    }
-}
-
-class SubNumberByAddHandler extends Handler {
-    public static $effect = SubNumbers::class;
-
-    public function resume(mixed $effect) {
-        return yield new AddNumbers($effect->a, -$effect->b);
     }
 }

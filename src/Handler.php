@@ -10,6 +10,7 @@ abstract class Handler {
     }
     public function resume(mixed $effect) {}
     public function handle(mixed $effect, \Closure $resume) {
-        $resume($this->resume($effect));
+        $value = $this->resume($effect);
+        return yield from $resume($value instanceof \Generator ? yield from $value : $value);
     }
 }

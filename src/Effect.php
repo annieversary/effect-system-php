@@ -2,43 +2,43 @@
 
 namespace Versary\EffectSystem;
 
-function run(\Generator $generator) {
-    if ($generator->valid()) {
-        $effect = $generator->current();
-        throw new Errors\UnhandledEffect($effect::class);
+abstract class Effect {
+    final public static function run(\Generator $generator) {
+        if ($generator->valid()) {
+            $effect = $generator->current();
+            throw new Errors\UnhandledEffect($effect::class);
+        }
+
+        return $generator->getReturn();
     }
 
-    return $generator->getReturn();
-}
+    final public static function handle(\Generator $generator, Handler $handler) {
+        $result = yield from self::inner_handle($generator, $handler);
+        return $handler->return($result);
+    }
 
-function handle(\Generator $generator, Handler $handler) {
-    while (true) {
+    final private static function inner_handle(\Generator $generator, Handler $handler) {
         if (!$generator->valid()) {
-            return $handler->return($generator->getReturn());
+            return $generator->getReturn();
         }
 
         $effect = $generator->current();
 
         if ($effect instanceof $handler::$effect) {
-            // TODO implement resume and call handle
-            // im not sure if handle should return a value or not
-            // personally i dont think so
-            $resume = fn ($p) => null;
+            $resume = function ($output) use ($generator, $handler) {
+                $generator->send($output instanceof \Generator ? yield from $output : $output);
 
-            $o = $handler->resume($effect);
-            if ($o instanceof \Generator) {
-                $output = yield from $o;
-            } else {
-                $output = $o;
+                return yield from self::inner_handle($generator, $handler);
+            };
+
+            $o = yield from $handler->handle($effect, $resume);
+
+            if ($o !== null) {
+                return $o;
             }
-        } else {
-            $output = yield $effect;
         }
 
-        $generator->send($output);
+        $generator->send(yield $effect);
+        return yield from self::inner_handle($generator, $handler);
     }
-}
-
-abstract class Effect {
-    //
 }

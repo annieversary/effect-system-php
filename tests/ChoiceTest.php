@@ -5,6 +5,7 @@ namespace Versary\EffectSystem;
 use PHPUnit\Framework\TestCase;
 
 use Versary\EffectSystem\Errors\UnhandledEffect;
+use Versary\EffectSystem\Tests\ChoiceTest\{Choice, ChoiceRandomHandler, ChoiceAllHandler};
 
 class ChoiceTest extends TestCase
 {
@@ -16,15 +17,15 @@ class ChoiceTest extends TestCase
     }
 
     public function test_random() {
-        $gen = handle($this->xor(), new ChoiceRandomHandler);
-        $result = run($gen);
+        $gen = Effect::handle($this->xor(), new ChoiceRandomHandler);
+        $result = Effect::run($gen);
 
         $this->assertIsBool($result);
     }
 
     public function test_all() {
-        $gen = handle($this->xor(), new ChoiceAllHandler);
-        $result = run($gen);
+        $gen = Effect::handle($this->xor(), new ChoiceAllHandler);
+        $result = Effect::run($gen);
 
         $this->assertEquals($result, [
             true, // true ^ false
@@ -34,6 +35,12 @@ class ChoiceTest extends TestCase
         ]);
     }
 }
+
+
+
+namespace Versary\EffectSystem\Tests\ChoiceTest;
+
+use Versary\EffectSystem\{Effect, Handler};
 
 class Choice extends Effect {
     public function __construct() {}
