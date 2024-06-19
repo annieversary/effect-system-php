@@ -21,7 +21,7 @@ class CancelTest extends TestCase
         $this->flag = false;
     }
 
-    public function test_basic() {
+    public function test_cancel() {
         $gen = $this->program();
         $gen = Effect::handle($gen, new CancelHandler);
         $result = Effect::run($gen);
