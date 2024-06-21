@@ -13,22 +13,23 @@ abstract class Effect {
     }
 
     final public static function handle(\Generator $generator, Handler $handler) {
-        $result = yield from self::inner_handle($generator, $handler);
-        return $handler->return($result);
-    }
-
-    private static function inner_handle(\Generator $generator, Handler $handler) {
         if (!$generator->valid()) {
-            return $generator->getReturn();
+            return $handler->return($generator->getReturn());
         }
 
         $effect = $generator->current();
 
         if ($effect instanceof $handler::$effect) {
-            $resume = function ($output) use ($generator, $handler) {
+            $resumed = false;
+            $resume = function ($output) use ($generator, $handler, &$resumed) {
+                // NOTE: ideally, we would clone the generator and not limit to only one `resume` call per `handle`
+                // but php doesn't like fun and doesn't let me clone generators :(
+                if ($resumed) throw new Errors\ResumedTwice($handler);
+                $resumed = true;
+
                 $generator->send($output instanceof \Generator ? yield from $output : $output);
 
-                return yield from self::inner_handle($generator, $handler);
+                return yield from self::handle($generator, $handler);
             };
 
             $handled = $handler->handle($effect, $resume);
@@ -36,11 +37,13 @@ abstract class Effect {
 
             // handle allows us to abort execution
             if ($handled !== null) {
-                return $handled;
+                return $handler->return($handled);
             }
+
+            return yield from self::handle($generator, $handler);
         }
 
         $generator->send(yield $effect);
-        return yield from self::inner_handle($generator, $handler);
+        return yield from self::handle($generator, $handler);
     }
 }

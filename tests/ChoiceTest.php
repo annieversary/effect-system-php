@@ -4,7 +4,7 @@ namespace Versary\EffectSystem;
 
 use PHPUnit\Framework\TestCase;
 
-use Versary\EffectSystem\Errors\UnhandledEffect;
+use Versary\EffectSystem\Errors\ResumedTwice;
 use Versary\EffectSystem\Tests\ChoiceTest\{Choice, ChoiceRandomHandler, ChoiceAllHandler};
 
 class ChoiceTest extends TestCase
@@ -24,6 +24,9 @@ class ChoiceTest extends TestCase
     }
 
     public function test_all() {
+        // we are not allowed to resume twice cause php doesn't let me clone generators :((
+        $this->expectException(ResumedTwice::class);
+
         $gen = Effect::handle($this->xor(), new ChoiceAllHandler);
         $result = Effect::run($gen);
 
@@ -60,11 +63,13 @@ class ChoiceAllHandler extends Handler {
     public function __construct(public array $options = []) {}
 
     public function handle(mixed $effect, \Closure $resume) {
-        $this->options[] = $resume(true);
-        $this->options[] = $resume(false);
+        return [
+            ...yield from $resume(true),
+            ...yield from $resume(false),
+        ];
    }
 
     public function return(mixed $value) {
-        return $this->options;
+        return [$value];
     }
 }
