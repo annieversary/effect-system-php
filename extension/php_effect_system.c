@@ -65,7 +65,4 @@ PHP_FUNCTION(clone_generator) {
     zend_generator *clone = (zend_generator*) clone_obj;
 
     copy(generator, clone);
-
-    php_printf("Hello World! %d\n", generator->value);
-    php_printf("Hello World! %d\n", clone->value);
 }
