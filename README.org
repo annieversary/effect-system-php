@@ -1,2 +1,114 @@
 * effect-system-php
-This library implements a basic effect system in PHP, using generators.
+This library implements a basic effect system in PHP, backed by generators.
+It's /loosely/ based on [[https://koka-lang.github.io][Koka]]'s effect system, though with some differences.
+
+** Usage
+*** Basic usage
+Effects can be declared by making a class that extends =Effect=:
+#+begin_src php
+use Versary\EffectSystem\{Effect, Handler};
+
+class AddNumbers extends Effect {
+    public function __construct(public int $a, public int $b) {}
+}
+#+end_src
+
+Handlers can be declared by making a class that extends =Handler=, and overriding the =resume= function
+#+begin_src php
+class AddNumberHandler extends Handler {
+    // Effect handled by this Handler
+    public static $effect = AddNumbers::class;
+
+    public function resume(mixed $effect) {
+        return $effect->a + $effect->b;
+    }
+}
+#+end_src
+
+Writing functions that use effects is easy. All effects have to be =yield=-ed up:
+#+begin_src php
+function basic() {
+    $v = yield new AddNumbers(3, 7);
+    return $v * 2;
+}
+
+function test_basic() {
+    // Wrap `basic` with a handler for `AddNumbers`. No code has run yet here.
+    $gen = Effect::handle(basic(), new AddNumberHandler);
+    // Run the function to completion, handling all effects.
+    $result = Effect::run($gen);
+
+    // $result equals `20`
+}
+#+end_src
+*** Advanced usage
+=Handler='s =resume= function, which we saw above, allows us to continue execution with an effect's result.
+This is enough for most cases, but some times we need more fine-grained control over how an effect is handled.
+
+For this, we have the =handle= function.
+While =resume= only takes in a =mixed $effect= parameter, =handle= takes a =mixed $effect= and a =$resume= closure.
+This closure is what allows us to continue execution.
+
+This is how =AddNumberHandler= would look like if written using =handle=.
+#+begin_src php
+class AddNumberHandlerWithHandle extends Handler {
+    public static $effect = AddNumbers::class;
+
+    public function handle(mixed $effect, \Closure $resume) {
+        // $resume is a generator, so we need to ensure we yield it's values up.
+        yield from $resume($effect->a + $effect->b);
+    }
+}
+#+end_src
+
+The power of =handle= comes from the fact that we can choose /how/ and /when/ to call =$resume=.
+For example, we can choose to not resume at all, and instead return from =handle=.
+This allows us to for example, make a cancellable function:
+
+#+begin_src php
+class Cancel extends Effect {}
+class CancelHandler extends Handler {
+    public static $effect = Cancel::class;
+
+    public function handle(mixed $effect, \Closure $resume) {
+        return 'cancelled';
+    }
+}
+
+$flag = true;
+
+function program() {
+    $flag = true;
+
+    yield from $this->inner();
+
+    // this will not get executed
+    $flag = false;
+}
+// Function that will `yield` a `Cancel`.
+function inner() {
+    yield new Cancel;
+}
+
+function test_cancel() {
+    $result = Effect::run(Effect::handle(program(), new CancelHandler));
+
+    assertEquals('cancelled', $result);
+    assertTrue($this->flag);
+}
+#+end_src
+
+This is really powerful, since =Cancel= can be yielded deep within our callstack, without having to manually return up.
+*** More examples
+If you want to see more examples, check the [[./tests][tests]] folder.
+** Resuming multiple times
+Effect handlers are not allowed to resume multiple times, which is the biggest difference this library has with an actual effect system implementation such as [[https://koka-lang.github.io][Koka]]'s.
+This comes from a limitation on PHP's Generators, which are not cloneable.
+
+I'm trying to make a PHP Extension (written in C) that will allow me to manually clone generators in order to get around this limitation.
+The work in progress can be found in the [[./extension][extension]] folder.
+It can be compiled by running =make= in that directory.
+
+The idea is that once it works, loading the extension will be optional, but it'll allow resuming generators multiple times.
+
+If you know how to make this work correctly or you know another better way to clone generators, please let me know!
