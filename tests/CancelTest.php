@@ -12,10 +12,14 @@ class CancelTest extends TestCase
     // shitty way to test this
     public bool $flag = true;
 
+    function inner() {
+        yield new Cancel;
+    }
+
     function program() {
         $this->flag = true;
 
-        yield new Cancel;
+        yield from $this->inner();
 
         // this does not get executed
         $this->flag = false;

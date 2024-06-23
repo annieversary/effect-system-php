@@ -10,9 +10,7 @@ use Versary\EffectSystem\Tests\BasicTest\{AddNumbers, AddNumberHandler};
 class BasicTest extends TestCase
 {
     function basic() {
-        $v = yield new AddNumbers(3, 7);
-
-        return $v;
+        return yield new AddNumbers(3, 7);
     }
 
     public function test_basic() {
