@@ -4,11 +4,12 @@ namespace Versary\EffectSystem;
 
 use PHPUnit\Framework\TestCase;
 
-use Versary\EffectSystem\Errors\UnhandledEffect;
 use Versary\EffectSystem\Tests\DeferTest\{Defer, DeferHandler};
 
 class DeferTest extends TestCase
 {
+    public int $v = 0;
+
     function program() {
         $this->v = 1;
 
