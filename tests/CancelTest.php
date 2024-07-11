@@ -33,6 +33,28 @@ class CancelTest extends TestCase
         $this->assertEquals('cancelled', $result);
         $this->assertTrue($this->flag);
     }
+
+    function division(int $a, int $b) {
+        if ($b === 0) yield new Cancel;
+
+        return $a / $b;
+    }
+
+    public function test_division() {
+        $result = Effect::run(Effect::handle($this->division(3, 0), new CancelHandler));
+        $this->assertEquals('cancelled', $result);
+
+        $result = Effect::run(Effect::handle($this->division(6, 2), new CancelHandler));
+        $this->assertEquals(3, $result);
+    }
+
+    public function test_unhandled_division() {
+        $this->expectException(\DivisionByZeroError::class);
+
+        Effect::run(Effect::handle($this->division(3, 0), new class extends Handler {
+            public static $effect = Cancel::class;
+        }));
+    }
 }
 
 namespace Versary\EffectSystem\Tests\CancelTest;

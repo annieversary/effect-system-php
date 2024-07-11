@@ -29,6 +29,10 @@ class ExtensionTest extends TestCase {
         $this->assertEquals(3, $gen->current());
         // the new one hasn't
         $this->assertEquals(2, $new->current());
+
+        $new->next();
+        $this->assertEquals(3, $gen->current());
+        $this->assertEquals(3, $new->current());
     }
 }
 
