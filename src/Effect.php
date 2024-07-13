@@ -21,7 +21,7 @@ abstract class Effect {
 
         if ($effect instanceof $handler::$effect) {
             $resumed = false;
-            $resume = function ($output) use ($generator, $handler, &$resumed) {
+            $resume = function ($output = null) use ($generator, $handler, &$resumed) {
                 // NOTE: ideally, we would clone the generator and not limit to only one `resume` call per `handle`
                 // but php doesn't like fun and doesn't let me clone generators :(
                 if ($resumed) throw new Errors\ResumedTwice($handler);
