@@ -296,4 +296,40 @@ class ExtensionTest extends TestCase {
         // true^true=0, true^false=1, false^true=1, false^false=0
         $this->assertEquals([0, 0, 1, 1], $results);
     }
+
+    // ---- extra arguments beyond declared params are preserved in clone ----
+
+    function gen_with_declared($a, $b) {
+        yield $a;
+        yield $b;
+    }
+
+    public function test_clone_with_extra_args() {
+        // Pass extra args beyond the declared parameter count so that
+        // num_args > op_array->num_args, exercising the extra-arg addref path.
+        $gen = call_user_func_array([$this, 'gen_with_declared'], ['hello', 'world', 'extra1', 'extra2']);
+        $this->assertEquals('hello', $gen->current());
+
+        $clone = clone $gen;
+
+        $gen->next();
+        $clone->next();
+
+        $this->assertEquals('world', $gen->current());
+        $this->assertEquals('world', $clone->current());
+    }
+
+    // ---- unsupported: cloning a generator suspended in yield from ----
+
+    function inner_gen() { yield 1; yield 2; }
+    function delegating_gen() { yield from $this->inner_gen(); yield 3; }
+
+    public function test_clone_of_delegating_generator_throws() {
+        $gen = $this->delegating_gen();
+        $gen->current(); // starts outer, delegates to inner, inner yields 1
+
+        $this->expectException(\Error::class);
+        $this->expectExceptionMessage('Cannot clone a generator that is currently delegating via yield from');
+        clone $gen;
+    }
 }

@@ -77,7 +77,7 @@ static void copy(zend_generator *generator, zend_generator *clone)
     memcpy(new_ex, orig_ex, frame_size);
 
     new_ex->return_value = (zval *) clone;
-    new_ex->prev_execute_data = NULL;
+    new_ex->prev_execute_data = &clone->execute_fake;
 
     uint32_t call_info = ZEND_CALL_INFO(new_ex);
     if (call_info & ZEND_CALL_RELEASE_THIS) {
@@ -108,6 +108,18 @@ static void copy(zend_generator *generator, zend_generator *clone)
         }
     }
 
+    /* Addref extra variadic args stored beyond last_var + T. */
+    if (num_args > op_array->num_args) {
+        uint32_t base = (uint32_t)(op_array->last_var + op_array->T);
+        uint32_t extra = num_args - op_array->num_args;
+        for (uint32_t i = 0; i < extra; i++) {
+            zval *var = ZEND_CALL_VAR_NUM(new_ex, base + i);
+            if (Z_REFCOUNTED_P(var)) {
+                Z_ADDREF_P(var);
+            }
+        }
+    }
+
     if (generator->send_target) {
         ptrdiff_t offset = (char *) generator->send_target - (char *) orig_ex;
         clone->send_target = (zval *)((char *) new_ex + offset);
@@ -127,6 +139,20 @@ static zend_object *generator_clone_obj(zend_object *old_obj)
 {
     zend_generator *generator = (zend_generator *) old_obj;
 
+    if (generator->frozen_call_stack) {
+        zend_throw_error(NULL,
+            "Cannot clone a generator that is suspended inside a nested call stack");
+        GC_ADDREF(old_obj);
+        return old_obj;
+    }
+
+    if (generator->node.parent != NULL) {
+        zend_throw_error(NULL,
+            "Cannot clone a generator that is currently delegating via yield from");
+        GC_ADDREF(old_obj);
+        return old_obj;
+    }
+
     zval clone_zval;
     object_init_ex(&clone_zval, zend_ce_generator);
     zend_generator *clone = (zend_generator *) Z_OBJ(clone_zval);
@@ -137,13 +163,22 @@ static zend_object *generator_clone_obj(zend_object *old_obj)
     return Z_OBJ(clone_zval);
 }
 
-/* ---- module init: patch the Generator handlers struct ------------------ */
+/* ---- module init: install clone handler -------------------------------- */
+
+/* Writable copy of Generator's object handlers stored in our data segment. */
+static zend_object_handlers generator_handlers;
 
 PHP_MINIT_FUNCTION(effect_system_php)
 {
-    zend_object_handlers *handlers =
-        (zend_object_handlers *)(uintptr_t) zend_ce_generator->default_object_handlers;
-    handlers->clone_obj = generator_clone_obj;
+    memcpy(&generator_handlers, zend_ce_generator->default_object_handlers,
+           sizeof(zend_object_handlers));
+    generator_handlers.clone_obj = generator_clone_obj;
+
+    /* Redirect the class entry to our copy. The class entry is heap-allocated
+       so writing through the const* pointer here is safe. */
+    zend_object_handlers **p =
+        (zend_object_handlers **) &zend_ce_generator->default_object_handlers;
+    *p = &generator_handlers;
 
     return SUCCESS;
 }

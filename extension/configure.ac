@@ -159,9 +159,7 @@ AS_VAR_IF([prefix], [NONE], [prefix=/usr/local])
 AS_VAR_IF([exec_prefix], [NONE], [exec_prefix='$(prefix)'])
 
 AS_VAR_IF([cross_compiling], [yes],
-  [AC_CHECK_PROGS([BUILD_CC], [gcc clang c99 c89 cc cl], [none])
-    AC_MSG_CHECKING([for native build C compiler])
-    AC_MSG_RESULT([$BUILD_CC])],
+  [AC_CHECK_PROGS([BUILD_CC], [gcc clang c99 c89 cc cl], [none])],
   [BUILD_CC=$CC])
 
 PHP_SUBST([PHP_MODULES])
