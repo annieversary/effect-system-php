@@ -1,22 +1,21 @@
-// include the PHP API itself
 #include <php.h>
 #include "zend_generators.h"
-// then include the header of your extension
+#include "zend_closures.h"
 #include "php_effect_system.h"
 
-// register our function to the PHP API
-// so that PHP knows, which functions are in this module
+/* forward declaration so it can be referenced in the module entry below */
+PHP_MINIT_FUNCTION(effect_system_php);
+
 zend_function_entry effect_system_php_functions[] = {
     PHP_FE(clone_generator, arginfo_clone_generator)
     PHP_FE_END
 };
 
-// some pieces of information about our module
 zend_module_entry effect_system_php_module_entry = {
     STANDARD_MODULE_HEADER,
     PHP_EFFECT_SYSTEM_EXTNAME,
     effect_system_php_functions,
-    NULL,
+    PHP_MINIT(effect_system_php),
     NULL,
     NULL,
     NULL,
@@ -25,203 +24,138 @@ zend_module_entry effect_system_php_module_entry = {
     STANDARD_MODULE_PROPERTIES
 };
 
-// use a macro to output additional C code, to make ext dynamically loadable
 ZEND_GET_MODULE(effect_system_php)
 
-void copy(zend_generator *generator, zend_generator *clone) {
-    clone->std = generator->std;
-    clone->flags = generator->flags;
+/* ---- core clone logic -------------------------------------------------- */
+
+static void copy(zend_generator *generator, zend_generator *clone)
+{
+    clone->flags = generator->flags & ~ZEND_GENERATOR_CURRENTLY_RUNNING;
     clone->largest_used_integer_key = generator->largest_used_integer_key;
 
-    clone->value = generator->value;
-    clone->key = generator->key;
-    clone->retval = generator->retval;
+    zval_ptr_dtor(&clone->value);
+    ZVAL_COPY(&clone->value, &generator->value);
 
-    clone->execute_data = generator->execute_data;
-    // TODO Create new execution context
+    zval_ptr_dtor(&clone->key);
+    ZVAL_COPY(&clone->key, &generator->key);
+
+    zval_ptr_dtor(&clone->retval);
+    ZVAL_COPY(&clone->retval, &generator->retval);
+
+    if (clone->execute_data) {
+        zend_execute_data *old_ex = clone->execute_data;
+        clone->execute_data = NULL;
+        zend_free_compiled_variables(old_ex);
+        efree(old_ex);
+    }
+
+    if (!generator->execute_data) {
+        clone->func = NULL;
+        clone->send_target = NULL;
+        clone->frozen_call_stack = NULL;
+        return;
+    }
+
+    zend_execute_data *orig_ex = generator->execute_data;
+    zend_op_array    *op_array = &orig_ex->func->op_array;
+    uint32_t          num_args = ZEND_CALL_NUM_ARGS(orig_ex);
+    size_t            frame_size;
+
+    if (num_args <= op_array->num_args) {
+        frame_size = (size_t)(ZEND_CALL_FRAME_SLOT
+                              + op_array->last_var
+                              + op_array->T) * sizeof(zval);
+    } else {
+        frame_size = (size_t)(ZEND_CALL_FRAME_SLOT
+                              + num_args
+                              + op_array->last_var
+                              + op_array->T
+                              - op_array->num_args) * sizeof(zval);
+    }
+
+    zend_execute_data *new_ex = (zend_execute_data *) emalloc(frame_size);
+    memcpy(new_ex, orig_ex, frame_size);
+
+    new_ex->return_value = (zval *) clone;
+    new_ex->prev_execute_data = NULL;
+
+    uint32_t call_info = ZEND_CALL_INFO(new_ex);
+    if (call_info & ZEND_CALL_RELEASE_THIS) {
+        Z_ADDREF(new_ex->This);
+    }
+    if (call_info & ZEND_CALL_CLOSURE) {
+        GC_ADDREF(ZEND_CLOSURE_OBJECT(new_ex->func));
+    }
+
+    for (uint32_t i = 0; i < (uint32_t) op_array->last_var; i++) {
+        zval *var = ZEND_CALL_VAR_NUM(new_ex, i);
+        if (Z_TYPE_P(var) != IS_UNDEF && Z_REFCOUNTED_P(var)) {
+            Z_ADDREF_P(var);
+        }
+    }
+
+    /* Only addref temporaries whose live_range spans the current yield. */
+    uint32_t op_num = (uint32_t)(orig_ex->opline - op_array->opcodes);
+    for (int i = 0; i < op_array->last_live_range; i++) {
+        const zend_live_range *range = &op_array->live_range[i];
+        if ((range->var & ZEND_LIVE_MASK) == ZEND_LIVE_SILENCE) continue;
+        if (range->start < op_num && op_num <= range->end) {
+            uint32_t var_offset = range->var & ~ZEND_LIVE_MASK;
+            zval *var = (zval *)((char *) new_ex + var_offset);
+            if (Z_REFCOUNTED_P(var)) {
+                Z_ADDREF_P(var);
+            }
+        }
+    }
+
+    if (generator->send_target) {
+        ptrdiff_t offset = (char *) generator->send_target - (char *) orig_ex;
+        clone->send_target = (zval *)((char *) new_ex + offset);
+    } else {
+        clone->send_target = NULL;
+    }
+
+    clone->execute_data = new_ex;
+    clone->func = new_ex->func;
+    clone->frozen_call_stack = NULL;
+    memset(&clone->node, 0, sizeof(clone->node));
 }
+
+/* ---- clone_obj handler — makes `clone $gen` work ----------------------- */
+
+static zend_object *generator_clone_obj(zend_object *old_obj)
+{
+    zend_generator *generator = (zend_generator *) old_obj;
+
+    zval clone_zval;
+    object_init_ex(&clone_zval, zend_ce_generator);
+    zend_generator *clone = (zend_generator *) Z_OBJ(clone_zval);
+
+    ZVAL_OBJ(&clone->execute_fake.This, Z_OBJ(clone_zval));
+    copy(generator, clone);
+
+    return Z_OBJ(clone_zval);
+}
+
+/* ---- module init: patch the Generator handlers struct ------------------ */
+
+PHP_MINIT_FUNCTION(effect_system_php)
+{
+    zend_object_handlers *handlers =
+        (zend_object_handlers *)(uintptr_t) zend_ce_generator->default_object_handlers;
+    handlers->clone_obj = generator_clone_obj;
+
+    return SUCCESS;
+}
+
+/* ---- PHP-callable wrapper ---------------------------------------------- */
 
 PHP_FUNCTION(clone_generator) {
-    zval *gen_val, *clone_val;
+    zval *gen_val;
 
-    ZEND_PARSE_PARAMETERS_START(2, 2)
+    ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_OBJECT_OF_CLASS(gen_val, zend_ce_generator);
-        Z_PARAM_ZVAL(clone_val);
     ZEND_PARSE_PARAMETERS_END();
 
-    zend_object *gen_obj = Z_OBJ_P(gen_val);
-    zend_generator *generator = (zend_generator*) gen_obj;
-
-    ZVAL_DEREF(clone_val);
-    zend_object *clone_obj = Z_OBJ_P(clone_val);
-    zend_generator *clone = (zend_generator*) clone_obj;
-
-    copy(generator, clone);
+    RETURN_OBJ(generator_clone_obj(Z_OBJ_P(gen_val)));
 }
-
-// https://github.com/php/php-src/blob/php-5.5.0beta2/Zend/zend_generators.c#L199
-/* static zend_object zend_generator_clone(zval *object) /\* {{{ *\/ */
-/* { */
-/* 	zend_generator *orig = (zend_generator *) Z_OBJ_P(object); */
-/* 	zend_object clone_val = zend_generator_create(Z_OBJCE_P(object)); */
-/* 	zend_generator *clone = zend_object_store_get_object_by_handle(clone_val.handle); */
-
-/* 	zend_objects_clone_members(&clone->std, &orig->std); */
-
-/* 	clone->execute_data = orig->execute_data; */
-/* 	clone->largest_used_integer_key = orig->largest_used_integer_key; */
-/* 	clone->flags = orig->flags; */
-
-/* 	if (orig->execute_data) { */
-/* 		/\* Create a few shorter aliases to the old execution data *\/ */
-/* 		zend_execute_data *execute_data = orig->execute_data; */
-/* 		zend_op_array *op_array = execute_data->op_array; */
-/* 		HashTable *symbol_table = execute_data->symbol_table; */
-/* 		zend_execute_data *current_execute_data; */
-/* 		zend_op **opline_ptr; */
-/* 		HashTable *current_symbol_table; */
-/* 		zend_vm_stack current_stack; */
-/* 		zval *current_this; */
-/* 		void **stack_frame, **orig_stack_frame; */
-
-/* 		/\* Create new execution context. We have to back up and restore */
-/* 		 * EG(current_execute_data), EG(opline_ptr), EG(active_symbol_table) */
-/* 		 * and EG(This) here because the function modifies or uses them  *\/ */
-/* 		current_execute_data = EG(current_execute_data); */
-/* 		EG(current_execute_data) = execute_data->prev_execute_data; */
-/* 		opline_ptr = EG(opline_ptr); */
-/* 		current_symbol_table = EG(active_symbol_table); */
-/* 		EG(active_symbol_table) = execute_data->symbol_table; */
-/* 		current_this = EG(This); */
-/* 		EG(This) = NULL; */
-/* 		current_stack = EG(argument_stack); */
-/* 		clone->execute_data = zend_create_execute_data_from_op_array(op_array, 0 TSRMLS_CC); */
-/* 		clone->stack = EG(argument_stack); */
-/* 		EG(argument_stack) = current_stack; */
-/* 		EG(This) = current_this; */
-/* 		EG(active_symbol_table) = current_symbol_table; */
-/* 		EG(current_execute_data) = current_execute_data; */
-/* 		EG(opline_ptr) = opline_ptr; */
-
-/* 		/\* copy *\/ */
-/* 		clone->execute_data->opline = execute_data->opline; */
-/* 		clone->execute_data->function_state = execute_data->function_state; */
-/* 		clone->execute_data->object = execute_data->object; */
-/* 		clone->execute_data->current_scope = execute_data->current_scope; */
-/* 		clone->execute_data->current_called_scope = execute_data->current_called_scope; */
-/* 		clone->execute_data->fast_ret = execute_data->fast_ret; */
-
-/* 		if (!symbol_table) { */
-/* 			int i; */
-
-/* 			/\* Copy compiled variables *\/ */
-/* 			for (i = 0; i < op_array->last_var; i++) { */
-/* 				if (*EX_CV_NUM(execute_data, i)) { */
-/* 					*EX_CV_NUM(clone->execute_data, i) = (zval **) EX_CV_NUM(clone->execute_data, op_array->last_var + i); */
-/* 					**EX_CV_NUM(clone->execute_data, i) = *(zval **) EX_CV_NUM(execute_data, op_array->last_var + i); */
-/* 					Z_ADDREF_PP(*EX_CV_NUM(clone->execute_data, i)); */
-/* 				} */
-/* 			} */
-/* 		} else { */
-/* 			/\* Copy symbol table *\/ */
-/* 			ALLOC_HASHTABLE(clone->execute_data->symbol_table); */
-/* 			zend_hash_init(clone->execute_data->symbol_table, zend_hash_num_elements(symbol_table), NULL, ZVAL_PTR_DTOR, 0); */
-/* 			zend_hash_copy(clone->execute_data->symbol_table, symbol_table, (copy_ctor_func_t) zval_add_ref, NULL, sizeof(zval *)); */
-
-/* 			/\* Update zval** pointers for compiled variables *\/ */
-/* 			{ */
-/* 				int i; */
-/* 				for (i = 0; i < op_array->last_var; i++) { */
-/* 					if (zend_hash_quick_find(clone->execute_data->symbol_table, op_array->vars[i].name, op_array->vars[i].name_len + 1, op_array->vars[i].hash_value, (void **) EX_CV_NUM(clone->execute_data, i)) == FAILURE) { */
-/* 						*EX_CV_NUM(clone->execute_data, i) = NULL; */
-/* 					} */
-/* 				} */
-/* 			} */
-/* 		} */
-
-/* 		/\* Copy nested-calls stack *\/ */
-/* 		if (execute_data->call) { */
-/* 			clone->execute_data->call = clone->execute_data->call_slots + */
-/* 				(execute_data->call - execute_data->call_slots); */
-/* 		} else { */
-/* 			clone->execute_data->call = NULL; */
-/* 		} */
-/* 		memcpy(clone->execute_data->call_slots, execute_data->call_slots, ZEND_MM_ALIGNED_SIZE(sizeof(call_slot)) * op_array->nested_calls); */
-/* 		if (clone->execute_data->call >= clone->execute_data->call_slots) { */
-/* 			call_slot *call = clone->execute_data->call; */
-
-/* 			while (call >= clone->execute_data->call_slots) { */
-/* 				if (call->object) { */
-/* 					Z_ADDREF_P(call->object); */
-/* 				} */
-/* 				call--; */
-/* 			} */
-/* 		} */
-
-/* 		/\* Copy the temporary variables *\/ */
-/* 		memcpy(EX_TMP_VAR_NUM(clone->execute_data, op_array->T-1), EX_TMP_VAR_NUM(execute_data, op_array->T-1), ZEND_MM_ALIGNED_SIZE(sizeof(temp_variable)) * op_array->T); */
-
-/* 		/\* Copy arguments passed on stack *\/ */
-/* 		stack_frame = zend_vm_stack_frame_base(clone->execute_data); */
-/* 		orig_stack_frame = zend_vm_stack_frame_base(execute_data); */
-/* 		clone->stack->top = stack_frame + (orig->stack->top - orig_stack_frame); */
-/* 		if (clone->stack->top != stack_frame) { */
-/* 			memcpy(stack_frame, orig_stack_frame, ZEND_MM_ALIGNED_SIZE(sizeof(zval*)) * (orig->stack->top - orig_stack_frame)); */
-/* 			while (clone->stack->top != stack_frame) { */
-/* 				Z_ADDREF_PP((zval**)stack_frame); */
-/* 				stack_frame++; */
-/* 			} */
-/* 		} */
-
-/* 		/\* Add references to loop variables *\/ */
-/* 		{ */
-/* 			zend_uint op_num = execute_data->opline - op_array->opcodes; */
-
-/* 			int i; */
-/* 			for (i = 0; i < op_array->last_brk_cont; ++i) { */
-/* 				zend_brk_cont_element *brk_cont = op_array->brk_cont_array + i; */
-
-/* 				if (brk_cont->start < 0) { */
-/* 					continue; */
-/* 				} else if (brk_cont->start > op_num) { */
-/* 					break; */
-/* 				} else if (brk_cont->brk > op_num) { */
-/* 					zend_op *brk_opline = op_array->opcodes + brk_cont->brk; */
-
-/* 					if (brk_opline->opcode == ZEND_SWITCH_FREE) { */
-/* 						temp_variable *var = EX_TMP_VAR(execute_data, brk_opline->op1.var); */
-
-/* 						Z_ADDREF_P(var->var.ptr); */
-/* 					} */
-/* 				} */
-/* 			} */
-/* 		} */
-
-/* 		/\* Update the send_target to use the temporary variable with the same */
-/* 		 * offset as the original generator, but in our temporary variable */
-/* 		 * memory segment. *\/ */
-/* 		if (orig->send_target) { */
-/* 			size_t offset = (char *) orig->send_target - (char *)execute_data; */
-/* 			clone->send_target = EX_TMP_VAR(clone->execute_data, offset); */
-/* 			zval_copy_ctor(&clone->send_target->tmp_var); */
-/* 		} */
-
-/* 		if (execute_data->current_this) { */
-/* 			clone->execute_data->current_this = execute_data->current_this; */
-/* 			Z_ADDREF_P(execute_data->current_this); */
-/* 		} */
-/* 	} */
-
-/* 	/\* The value and key are known not to be references, so simply add refs *\/ */
-/* 	if (orig->value) { */
-/* 		clone->value = orig->value; */
-/* 		Z_ADDREF_P(orig->value); */
-/* 	} */
-
-/* 	if (orig->key) { */
-/* 		clone->key = orig->key; */
-/* 		Z_ADDREF_P(orig->key); */
-/* 	} */
-
-/* 	return clone_val; */
-/* } */

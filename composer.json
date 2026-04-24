@@ -15,6 +15,6 @@
         "phpunit/phpunit": "^11.2"
     },
     "scripts": {
-        "test": "phpunit tests"
+        "test": "php -d extension=extension/modules/php_effect_system.so ./vendor/bin/phpunit tests"
     }
 }
