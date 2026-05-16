@@ -102,13 +102,13 @@ This is really powerful, since =Cancel= can be yielded deep within our callstack
 *** More examples
 If you want to see more examples, check the [[./tests][tests]] folder.
 ** Resuming multiple times
-Effect handlers are not allowed to resume multiple times, which is the biggest difference this library has with an actual effect system implementation such as [[https://koka-lang.github.io][Koka]]'s.
-This comes from a limitation on PHP's Generators, which are not cloneable.
+Normally, effect handlers are not allowed to resume multiple times, which is the biggest difference this library has with an actual effect system implementation such as [[https://koka-lang.github.io][Koka]]'s.
+This comes from a limitation on PHP's generators, which are not cloneable.
 
-I'm trying to make a PHP Extension (written in C) that will allow me to manually clone generators in order to get around this limitation.
-The work in progress can be found in the [[./extension][extension]] folder.
+Generators used to be clonable for a very short period of time during PHP 5, but it got removed due to some difficulties ensuring correctness.
+The [[./extension][extension]] folder is a C extension which reintroduces support for cloning generators.
 It can be compiled by running =make= in that directory.
+Loading the extension is optional, and everything (except resuming multiple times) works correctly without it.
 
-The idea is that once it works, loading the extension will be optional, but it'll allow resuming generators multiple times.
-
-If you know how to make this work correctly or you know another better way to clone generators, please let me know!
+The extension was made with the help of Claude.
+If you don't trust LLMs, I recommend against using it.
